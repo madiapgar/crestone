@@ -132,7 +132,7 @@ If you navigate to your `workflow/config_files` directory, you'll notice that I 
 
 ## the directory the data you're analyzing lives in (this should NOT be in the workflow directory) - in this case, it's your my_data directory
 ## you only have to name this once so all your subdirectories for raw sequencing files and metadata can be written as if you're already in my_data
-dataset_dir: "my_data/"
+dataset_dir: "overall directory where your data and results will live"
 qiime_env: "which QIIME2 environment did you install?"
 
 ## --GLOBAL OPTIONS--
@@ -154,7 +154,8 @@ core_metrics: "no" ## options: yes and no
 ## --NEEDED FILE PATHS--
 ## include if raw_sequences = "yes"
 raw_seq_dir: "the subdirectory(s) that your raw 16S fasta files live in" ## this should be under whatever you put as the dataset directory above
-## assumes that everything after the prefix of your barcodes file is "_barcodes.txt" and your qiime sequence objected is "_raw_seqs.qza"
+## assumes that everything after the prefix of your barcodes file is "_barcodes.txt" 
+## and your imported qiime sequence object is "_raw_seqs.qza"
 raw_seqs: "a list of file and/or directory names/prefixes of your raw sequences (if you have more than one) - these are wildcards"
 "ex: ["seq1_run/seq1", "seq2_run/seq2", "seq3_run/seq3"]"
 ## where do you want to trim and truncate your sequences during DADA2?
