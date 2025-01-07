@@ -5,7 +5,7 @@ import os
 rule demux:
     input:
         in1 = os.path.join(DATASET_DIR, RAW_SEQ_DIR, "{run}_barcodes.txt"),
-        in2 = os.path.join(DATASET_DIR, RAW_SEQ_DIR, "{run}_paired_end_seqs.qza")
+        in2 = os.path.join(DATASET_DIR, RAW_SEQ_DIR, "{run}_raw_seqs.qza")
     output:
         out1 = os.path.join(DATASET_DIR, RAW_SEQ_DIR, "{run}_demux.qza"),
         out2 = os.path.join(DATASET_DIR, RAW_SEQ_DIR, "{run}_demux_details.qza")

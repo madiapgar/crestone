@@ -51,9 +51,8 @@ git clone https://github.com/madiapgar/crestone.git
 So, after cloing the GitHub repository you should have a file system setup that looks something like this:
 
 ```bash
-$ tree workflow
-workflow
-├── my_data
+$ tree crestone
+crestone
 └── workflow
     ├── config_files
     │   ├── config_template.yml
@@ -67,14 +66,11 @@ workflow
     │   ├── 02_dada2.smk
     │   ├── 03_phylogeny.smk
     │   └── 04_core_metrics.smk
+    ├── tutorial
+    │   └── tutorial.md
     ├── run_snakemake.sh
     └── snakefile
 ```
-
-**Next steps:**
-
-1. Put the data that you want analyzed in the `my_data` directory. 
-
 
 ### **Installing snakemake and needed conda environments**
 
@@ -158,7 +154,7 @@ core_metrics: "no" ## options: yes and no
 ## --NEEDED FILE PATHS--
 ## include if raw_sequences = "yes"
 raw_seq_dir: "the subdirectory(s) that your raw 16S fasta files live in" ## this should be under whatever you put as the dataset directory above
-## assumes that everything after the prefix of your barcodes file is "_barcodes.txt" and your qiime sequence objected is _paired_end_seqs.qza
+## assumes that everything after the prefix of your barcodes file is "_barcodes.txt" and your qiime sequence objected is "_raw_seqs.qza"
 raw_seqs: "a list of file and/or directory names/prefixes of your raw sequences (if you have more than one) - these are wildcards"
 "ex: ["seq1_run/seq1", "seq2_run/seq2", "seq3_run/seq3"]"
 ## where do you want to trim and truncate your sequences during DADA2?
@@ -186,7 +182,29 @@ Once you have your config file set up the way you want it, you only have one mor
 
 ### **Running the actual workflow (finally!!)**
 
-So, after all of your hard work, it's time to attempt to run my workflow. Be warned, you may have to do some debugging but once you get it working, it runs beautifully (much like GitHub). 
+So, after all of your hard work, it's time to attempt to run my workflow. Be warned, you may have to do some debugging but once you get it working, it runs beautifully (much like GitHub).
+
+The most important part of this analysis are the raw 16S sequences so let's place the final piece of the puzzle. Remember back before you cloned the GitHub repository you created a new directory to put it in (in my case, it's called `crestone`)? Let's create a subdirectory under that one to put the raw sequences in.
+
+```bash
+mkdir my_raw_16s_data
+```
+
+Copy your raw 16S sequences into your new `my_raw_16s_data` subdirectory. When you're done, you should have two subdirectories, `my_raw_16s_data` and `workflow` (which you received when you cloned the GitHub repository). Since the workflow doesn't take the completely raw 16S sequences due to them being either single or paired end, the 'raw' data the workflow is expecting a QIIME2 imported object and its associated `barcodes.txt` file. 
+
+```bash
+## single end qiime import command
+qiime tools import \
+    --type EMPSingleEndSequences \
+    --input-path raw_seqs \ ## this is a directory with the forward, reverse, and barcodes .fastq.gz files
+    --output-path single_end_raw_seqs.qza
+
+## paired end qiime import command
+qiime tools import \
+    --type EMPPairedEndSequences \
+    --input-path raw_seqs \ ## this is a directory with the forward, reverse, and barcodes .fastq.gz files
+    --output-path paired_end_raw_seqs.qza
+```
 
 I've also included a handy `bash` script under `workflow/` named `run_snakemake.sh`. This basically allows you to freely edit the snakemake command, which could mean switching out your config file, altering the amount of cores on your computer snakemake uses, and adding flags for the workflow as you see fit. So, let's take a look at `run_snakemake.sh`. 
 
