@@ -1,0 +1,48 @@
+## config file template
+## if you need additional examples for how to handle your config file, check out the workflow/config_files directory!
+
+dataset_dir: "the directory the data you're analyzing lives in (this should NOT be in the workflow directory)"
+qiime_env: "which QIIME2 environment did you install?"
+
+## --GLOBAL OPTIONS--
+## are you starting with raw 16S sequences?
+raw_sequences: "no" ## options: yes and no 
+
+## IF YOU HAVE SAID YES TO raw_sequences WHATEVER YOU PUT IN run_demux_only AND run_dada2_only WILL NOT MATTER
+## option to split demux and dada2 steps so you can know where to trim/truncate your seqs
+run_demux_only: "yes" ## options: yes and no
+run_dada2_only: "no" ## options: yes and no
+
+## do you want to run taxonomic classification? chances are yes since you're running this workflow
+tax_class: "no" ## options: yes and no, default is yes 
+
+## do you want to run core metrics analysis on your data to get alpha/beta diversity?
+core_metrics: "no" ## options: yes and no
+## -------------------
+
+## --NEEDED FILE PATHS--
+## include if raw_sequences = "yes"
+raw_seq_dir: "the subdirectory(s) that your raw 16S fasta files live in" ## this should be under whatever you put as the dataset directory above
+## assumes that everything after the prefix of your barcodes file is "_barcodes.txt" and your qiime sequence objected is _paired_end_seqs.qza
+raw_seqs: "a list of file and/or directory names/prefixes of your raw sequences (if you have more than one) - these are wildcards"
+"ex: ["seq1_run/seq1", "seq2_run/seq2", "seq3_run/seq3"]"
+## where do you want to trim and truncate your sequences during DADA2?
+## pro tip: make sure these values are the same for every set sequencing experiments that you want to compare!
+dada2_trim_left_for: 0
+dada2_trim_left_rev: 0
+dada2_trunc_len_for: 0
+dada2_trunc_len_rev: 0
+
+## include if tax_class = "yes"
+## if you ran raw sequences, you don't need to provide file paths for your biom_table and rep_seqs
+## if not, you need to tell snakemake the file path to your biom_table and rep_seqs
+biom_table: NA
+rep_seqs: NA
+metadata: "what is your QIIME2-approved metadata file called?"
+
+## include if core_metrics = "yes"
+## what sampling depth do you want to use for your core metrics analysis? 
+## if you're not sure, I'd consult data/qiime/taxonomy_filtered.qzv
+core_metrics_sampling_depth: 0
+## -------------------
+

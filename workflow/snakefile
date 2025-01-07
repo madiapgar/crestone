@@ -1,0 +1,136 @@
+import os
+import pandas as pd
+
+## master snakefile
+
+## setting environmental variables
+DATASET_DIR = config["dataset_dir"]
+RUN_DEMUX_DADA2 = config["raw_sequences"]
+TAX_CLASS = config["tax_class"]
+CORE_METRICS = config["core_metrics"]
+QIIME = config["qiime_env"]
+
+
+## step 1
+RAW_SEQ_DIR = config["raw_seq_dir"]
+RAW_SEQS = config["raw_seqs"]
+TRIM_LFT_FOR = config["dada2_trim_left_for"]
+TRIM_LFT_REV = config["dada2_trim_left_rev"]
+TRUNC_LEN_FOR = config["dada2_trunc_len_for"]
+TRUNC_LEN_REV = config["dada2_trunc_len_rev"]
+
+## deals with the option to break up demux and dada2 steps
+if RUN_DEMUX_DADA2 == 'yes':
+    RUN_DEMUX = "yes"
+    RUN_DADA2 = "yes"
+else:
+    RUN_DEMUX = config["run_demux_only"]
+    RUN_DADA2 = config["run_dada2_only"]
+
+## steps 2 and 3
+## deals with whether a biom table and rep seqs are provided or not
+## user doesn't ned to provide one if they've run demux and dada2
+if RUN_DEMUX_DADA2 == 'yes':
+    BIOM = "data/qiime/merged_table.qza"
+    REP_SEQS = "data/qiime/merged_rep_seqs.qza"
+else:
+    BIOM = config["biom_table"]
+    REP_SEQS = config["rep_seqs"]
+
+## step 4 and 5
+METADATA = config["metadata"]
+CORE_SAMPLING_DEPTH = config["core_metrics_sampling_depth"]
+
+
+## defining output file paths from rules
+## first need function to do this
+def comb_filepaths(filepath1,
+                   filepath2):
+    return os.path.join(filepath1, filepath2)
+
+
+## creating lists of inputs for rule_all
+## includes outputs from step 1 - demux (these look funky bc I'm using wildcards)
+demux_rule_all = [expand(os.path.join(DATASET_DIR, RAW_SEQ_DIR, "{run}_demux.qza"),
+                                      run=RAW_SEQS),
+                  expand(os.path.join(DATASET_DIR, RAW_SEQ_DIR, "{run}_demux_details.qza"),
+                                      run=RAW_SEQS),
+                  expand(os.path.join(DATASET_DIR, RAW_SEQ_DIR, "{run}_demux.qzv"),
+                                      run=RAW_SEQS)] 
+
+## includes outputs from step 2 - dada2
+## I broke demux and dada2 up so that people could stop the workflow after demux and figure out 
+## where they want to trim and truncate
+dada2_rule_all = [expand(os.path.join(DATASET_DIR, "data/qiime/{run}_table.qza"),
+                                      run=RAW_SEQS),
+                  expand(os.path.join(DATASET_DIR, "data/qiime/{run}_rep_seqs.qza"),
+                                      run=RAW_SEQS),
+                  expand(os.path.join(DATASET_DIR, "data/qiime/{run}_denoise_stats.qza"),
+                                      run=RAW_SEQS),
+                  os.path.join(DATASET_DIR, "data/qiime/merged_table.qza"),
+                  os.path.join(DATASET_DIR, "data/qiime/merged_rep_seqs.qza")]
+
+
+## taxonomic classification steps
+tax_outs = ["databases/sepp-refs-silva-128.qza",
+            "databases/silva-138-99-515-806-nb-classifier.qza",
+            "data/qiime/tree.qza",
+            "data/qiime/placements.qza",
+            "data/qiime/filt_table.qza",
+            "data/qiime/rem_table.qza",
+            "data/qiime/taxonomy.qza",
+            "data/qiime/taxonomy_filtered.qza",
+            "data/qiime/taxonomy_filtered.qzv",
+            "data/qiime/taxOnly_otu_table.qza",
+            "data/qiime/tax_barplot.qzv"]
+
+tax_rule_all = [comb_filepaths(DATASET_DIR, filepath) for filepath in tax_outs] 
+
+## do you want to run core metrics analysis? 
+core_metrics_outs = ["data/qiime/core_outputs/unweighted_unifrac_distance_matrix.qza",
+                     "data/qiime/core_outputs/uw_dist_matrix.tsv",
+                     "data/qiime/core_outputs/weighted_unifrac_distance_matrix.qza",
+                     "data/qiime/core_outputs/w_dist_matrix.tsv",
+                     "data/qiime/core_outputs/shannon_vector.qza",
+                     "data/qiime/core_outputs/shannon_entropy.tsv",
+                     "data/qiime/core_outputs/faith_pd_vector.qza",
+                     "data/qiime/core_outputs/faith_pd.tsv"]
+
+core_metrics_rule_all = [comb_filepaths(DATASET_DIR, filepath) for filepath in core_metrics_outs] 
+
+
+
+## identifying which sections of the overall workflow to run based on the config_file (runs anything that says "yes")
+## dictionary has which sections to run and what they're called
+variable_dict = {"RUN_DEMUX": RUN_DEMUX,
+                 "RUN_DADA2": RUN_DADA2,
+                 "TAX_CLASS": TAX_CLASS,
+                 "CORE_METRICS": CORE_METRICS}
+
+## dictionary has the wanted output file paths for the associated sections that can be put together 
+output_fps = {"RUN_DEMUX": demux_rule_all,
+              "RUN_DADA2": dada2_rule_all,
+              "TAX_CLASS": tax_rule_all,
+              "CORE_METRICS": core_metrics_rule_all}
+
+## dictionary has the snakemake sub-workflows associated with each section to select to include in the analysis
+rules_dict = {"RUN_DEMUX": "rules/01_demux.smk",
+              "RUN_DADA2": "rules/02_dada2.smk",
+              "TAX_CLASS": "rules/03_phylogeny.smk",
+              "CORE_METRICS": "rules/04_core_metrics.smk"}
+
+
+rule_all_input_list = []
+for section, answer in variable_dict.items():
+    if answer == 'yes':
+        fps = output_fps[section]
+        rule_all_input_list.append(fps)
+
+        sub_snake = rules_dict[section]
+        include: sub_snake
+
+
+## rule all
+rule all:
+    input:
+        data = rule_all_input_list

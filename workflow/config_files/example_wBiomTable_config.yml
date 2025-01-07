@@ -1,0 +1,40 @@
+## config file for arizona and new anschutz experiment stool sample comparisons
+
+dataset_dir: "comparisons/"
+qiime_env: "qiime2-2023.5"
+
+
+## --GLOBAL OPTIONS--
+## are you starting with raw 16S sequences?
+raw_sequences: "no" ## options: yes and no 
+
+## IF YOU HAVE SAID YES TO raw_sequences WHATEVER YOU PUT IN run_demux_only AND run_dada2_only WILL NOT MATTER
+## option to split demux and dada2 steps so you can know where to trim/truncate your seqs
+run_demux_only: "no" ## options: yes and no
+run_dada2_only: "no" ## options: yes and no
+
+## do you want to run taxonomic classification? chances are yes since you're running this workflow
+tax_class: "yes" ## options: yes and no, default is yes 
+
+## do you want to run core metrics analysis on your data to get alpha/beta diversity?
+core_metrics: "yes" ## options: yes and no
+## -------------------
+
+
+## --NEEDED FILE PATHS--
+## include if raw_sequences = "yes"
+raw_seq_dir: NA
+raw_seqs: NA ## assumes that everything after this is "_paired_end_seqs.qza"
+dada2_trim_left_for: NA
+dada2_trim_left_rev: NA
+dada2_trunc_len_for: NA
+dada2_trunc_len_rev: NA
+
+## include if tax_class = "yes"
+biom_table: "data/qiime/allExp_comp_d15_table.qza"
+rep_seqs: "data/qiime/allExp_comp_d15_seqs.qza"
+metadata: "data/misc/oldNew_comp_d15_metadata.tsv"
+
+## include if core_metrics = "yes"
+core_metrics_sampling_depth: 4437 ## might need a new sampling depth!
+## ---------------------

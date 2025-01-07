@@ -1,0 +1,19 @@
+name: r_env_test
+channels:
+    - bioconda
+    - conda-forge
+    - anaconda
+    - r
+dependencies:
+    - pip
+    - r-base=> 4.0
+    - r-essentials
+    - r-qiime2r
+    - r-rstatix
+    - r-ggpubr
+    - r-cowplot
+    - r-ggh4x
+    - r-argparse
+    - r-ggforce
+    - pip:
+        - snakemake
