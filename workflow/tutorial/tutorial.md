@@ -15,16 +15,16 @@ This workflow can take raw 16S sequencing FASTA files and run them through QIIME
 There are a few different places that you can start and stop my workflow depending on which parts of the 16S data analysis you need done:
 
 1. You can run the analysis from start to finish, raw FASTA sequencing files through alpha/beta diversity.
-    - via all global options in the config file being set to "yes"
+    - via all global options in the config file being set to **"yes"**
 2. You can run Demux and DADA2 separately so you can check the demultiplexed results for where to trim/truncate your sequences in DADA2.
-    - via `raw_sequences:` *"no"* and `run_demux_only`/`run_dada2_only`: *"yes"/"no"* in the config file
+    - via `raw_sequences:`**"no"** and `run_demux_only`/`run_dada2_only`:**"yes"/"no"** in the config file
 3. You can come into the analysis with BIOM table and representative sequences .qza files and run taxonomic classification/core metrics analysis from there.
-    - via `raw_sequences`, `run_demux_only`, and `run_dada2_only`: *"no"* in the config file
-    - via `tax_class` and `core_metrics`: *"yes"* in the config file
+    - via `raw_sequences`, `run_demux_only`, and `run_dada2_only`:**"no"** in the config file
+    - via `tax_class` and `core_metrics`:**"yes"** in the config file
     - make sure that you include the file paths to your BIOM table and representative sequences under `biom_table`/`rep_seqs` in the config file
 4. You can stop the workflow after taxonomic classification to determine your sampling depth for core metrics analysis. 
-    - via `tax_class`: *"yes"* and `core_metrics`: *"no"* in the config file 
-    - once you know your sampling depth and have updated `core_metrics_sampling_depth` in your config file, you can change `core_metrics:` *"yes"* and rerun the workflow 
+    - via `tax_class`:**"yes"** and `core_metrics`:**"no"** in the config file 
+    - once you know your sampling depth and have updated `core_metrics_sampling_depth` in your config file, you can change `core_metrics:` **"yes"** and rerun the workflow 
 
 If this seems all a little complicated, don't worry, we're going over the config file in more depth later. 
 
@@ -128,7 +128,7 @@ Where you should see `snakemake_env` and `qiime2-2023.5` listed among your other
 
 If you navigate to your `workflow/config_files` directory, you'll notice that I already put a `config_template.yml` file there. Let's open `config_template.yml` and take a look at it. 
 
-A note: Like any other software tool, my workflow is something that may need to be run multiple times with differing parameters in order to get to the end result you desire, it just depends on how complicated your data is. The config file is incredibly flexible and can be easily edited between runs to reflect new desired parameters or files so don't be afraid to switch things up! 
+*A note: Like any other software tool, my workflow is something that may need to be run multiple times with differing parameters in order to get to the end result you desire, it just depends on how complicated your data is. The config file is incredibly flexible and can be easily edited between runs to reflect new desired parameters or files so don't be afraid to switch things up!* 
 
 ```yaml
 ## config file template
