@@ -33,6 +33,9 @@ else:
 if RUN_DEMUX_DADA2 == 'yes':
     BIOM = "data/qiime/merged_table.qza"
     REP_SEQS = "data/qiime/merged_rep_seqs.qza"
+elif RUN_DADA2 == 'yes':
+    BIOM = "data/qiime/merged_table.qza"
+    REP_SEQS = "data/qiime/merged_rep_seqs.qza"
 else:
     BIOM = config["biom_table"]
     REP_SEQS = config["rep_seqs"]
