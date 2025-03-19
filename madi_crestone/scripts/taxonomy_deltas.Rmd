@@ -1,0 +1,369 @@
+---
+title: "taxonomy_deltas"
+output: html_document
+date: "2025-03-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(magrittr)
+library(broom)
+library(qiime2R)
+library(apppleplots)
+library(ggpubr)
+library(rstatix)
+```
+
+## **Functions**
+`source()` pulls in functions placed in other R scripts and saves them to your global environment!
+- here i'm pulling in the statistical analysis functions:
+  - `test_normality()` - does basic R tests for normality on the data
+  - `art_lmer_notStrat()` - runs aligned rank transform lmer on the data in an overall model (not stratified)
+  - `art_lmer_strat()` - runs aligned rank transform lmer on the data in a variable stratified model
+  - `art_lmer_doubleStrat()` - runs aligned rank transform lmer on the data in a model stratified by two variables
+```{r}
+source("art_lmer_functions.R")
+source("normality_function.R")
+
+abun_file_prep <- function(metadata_fp,
+                           tax_fp,
+                           otu_table_fp,
+                           group_by_cols,
+                           filter_tax_by = NULL,
+                           filter_tax_col = NULL){
+  ## metadata
+  metadata_file <- read_tsv(metadata_fp)
+  ## taxonomy
+  taxonomy <- read_qza(tax_fp)$data %>% 
+    parse_taxonomy() %>% 
+    rownames_to_column('asv')
+  ## otu table 
+  otu_table <- read_qza(otu_table_fp)$data
+  
+  otu_table <- otu_table %>% 
+    as_tibble(rownames = 'asv') %>% 
+    gather(-asv, key = sampleid, value = abun) %>% 
+    group_by(sampleid) %>% 
+    mutate(rel_abun = abun/sum(abun)) %>% 
+    mutate(rel_abun = rel_abun + 0.000001) %>% 
+    filter(sampleid %in% metadata_file$sampleid)
+  ## joining all tables together 
+  abun_table <- otu_table %>% 
+    left_join(metadata_file, by = 'sampleid') %>% 
+    left_join(taxonomy, by = 'asv') %>% 
+    group_by(across(all_of(group_by_cols))) %>%
+    summarise(rel_abund = sum(rel_abun)) %>% 
+    ungroup()
+  
+  if (is.character(filter_tax_by) & is.character(filter_tax_col)){
+    abun_table <- abun_table %>% 
+      filter(.data[[filter_tax_col]] %in% filter_tax_by)
+  } else {
+    abun_table
+  }
+  
+  ## creating a list for my outputs
+  my_list <- list(Taxonomy = taxonomy,
+                  OTUTable = otu_table,
+                  AbundanceTable = abun_table)
+  return(my_list)
+}
+
+## function to generate the deltas plot, can be faceted or not 
+## stat table must be provided with group 1, group 2, p.adj.signif, and y.position columns 
+## (and a column matching what you're faceting by if relevant)
+make_deltas_plot <- function(input_table,
+                             x_axis,
+                             y_axis,
+                             facet_by = NULL,
+                             free_y = FALSE,
+                             stat_table,
+                             x_labs,
+                             x_name,
+                             y_name,
+                             title_content){
+  plot <- input_table %>% 
+    ggplot(aes(x = .data[[x_axis]], y = .data[[y_axis]])) +
+    geom_boxplot(aes(group = .data[[x_axis]]), outlier.shape = NA) +
+    geom_hline(yintercept = 0, linetype = 'dashed', color = 'purple', size = 0.4) +
+    geom_jitter(width = 0.1, height = 0, alpha = 0.4, size = 2.5) +
+    theme_bw(base_size = 20) +
+    scale_x_discrete(labels = x_labs) +
+    labs(x = x_name,
+         y = y_name,
+         title = title_content)
+  
+  if (is.character(facet_by) & free_y == TRUE){
+    plot <- plot +
+       facet_wrap(~.data[[facet_by]],
+                  scales = 'free_y') +
+       stat_pvalue_manual(stat_table,
+                          step.group.by = facet_by,
+                          step.increase = 0.1,
+                          label = 'p.adj.signif')
+  } else {
+    if (is.character(facet_by)){
+      plot <- plot + 
+        facet_wrap(.data[[facet_by]],
+                   scales = "fixed") +
+        stat_pvalue_manual(stat_table,
+                           step.group.by = facet_by,
+                           step.increase = 0.1,
+                           label = 'p.adj.signif')
+    } else {
+      plot <- plot +
+        stat_pvalue_manual(stat_table,
+                           step.increase = 0.1,
+                           label = 'p.adj.signif')
+    }
+  }
+  
+  return(plot)
+}
+```
+
+
+## **Reading in files and data wrangling**
+
+**File paths**
+```{r}
+tax_FP <- '../../oren_crestone/data/qiime/taxonomy.qza'
+otu_table_FP <- '../../oren_crestone/data/qiime/taxOnly_otu_table.qza'
+proc_seq_meta_fp <- '../data/proc_seq_metadata.tsv'
+subject_info_fp <- '../data/subject_info.tsv'
+
+## global lists for renaming plot labels
+visit_x_labs <- c('Screen',
+                  'D1',
+                  'D4',
+                  'TOC',
+                  'D17', 
+                  'D40', 
+                  'D70') 
+
+treat_group_labs <- c('CRS3123 200mg',
+                      'CRS3123 400mg',
+                      'Vancomycin 125mg')
+names(treat_group_labs) <- c('CRS3123_200mg_po_bid',
+                             'CRS3123_400mg_po_bid',
+                             'Vancomycin_125mg_po_qid')
+
+special_treatGroup_x_labs <- c('CRS3123\n200mg',
+                               'CRS3123\n400mg',
+                               'Vancomycin\n125mg')
+```
+
+**Prepping abundance table**
+```{r}
+subject_info_df <- read_tsv(subject_info_fp)
+
+abun_col_list <- c('sampleid',
+                   'subject_id',
+                   'visit_day',
+                   'new_visit_num',
+                   'new_visit_label',
+                   'Phylum',
+                   'Family',
+                   'Genus')
+
+wanted_family <- c('Enterobacteriaceae')
+
+wanted_genus <- c('Bifidobacterium',
+                  'Enterococcus',
+                  'Clostridioides',
+                  'Lactobacillus',
+                  'Bacteroides',
+                  'Escherichia-Shigella')
+
+abun_files <- abun_file_prep(metadata_fp = proc_seq_meta_fp,
+                             tax_fp = tax_FP,
+                             otu_table_fp = otu_table_FP,
+                             group_by_cols = abun_col_list,
+                             filter_tax_by = wanted_genus,
+                             filter_tax_col = 'Genus')
+
+proc_abun_table <- abun_files$AbundanceTable
+
+proc_abun_table <- proc_abun_table %>% 
+  left_join(subject_info_df, by = 'subject_id') %>% 
+  na.omit() %>% 
+  mutate(new_visit_num = as.numeric(new_visit_num))
+```
+
+
+## **Baseline vs TOC rel abun deltas plot for all selected genera**
+
+**Calculating TOC-baseline deltas**
+```{r}
+## putting together deltas table
+all_genera_deltas_table <- proc_abun_table %>% 
+  select(subject_id, new_visit_label, Genus, rel_abund, treatment_group) %>% 
+  filter(new_visit_label == 'D1' | new_visit_label == 'D10-15/TOC') %>% 
+  spread(new_visit_label, rel_abund) %>% 
+  na.omit() %>% 
+  group_by(subject_id) %>% 
+  mutate(D1_TOC_diff = (`D10-15/TOC` - D1)) %>% 
+  convert_as_factor(treatment_group)
+```
+
+**LMER stats for deltas (stratified by genus)**
+```{r}
+allGenera_deltas_lmer <- art_lmer_strat(input_table = all_genera_deltas_table,
+                                           strat_variable = 'Genus',
+                                           model_formula_left = 'D1_TOC_diff',
+                                           model_formula_right = 'treatment_group',
+                                           model_contrast_run_by = 'treatment_group')
+
+## adding y position to stat table so I can put it on the plot 
+allGenera_deltas_contrast <- allGenera_deltas_lmer$ARTContrast %>% 
+  rename(p.adj.signif = signif,
+         p = p.value) %>%
+  mutate(y.position = case_when(
+    Genus == 'Bacteroides' ~ 0.7,
+    Genus == 'Bifidobacterium' ~ 0.4,
+    Genus == 'Clostridioides' ~ 0.04,
+    Genus == 'Enterococcus' ~ 0.5,
+    Genus == 'Escherichia-Shigella' ~ 0.1,
+    Genus == 'Lactobacillus' ~ 0.35
+  ))
+```
+
+**Plot with stats on it**
+```{r, fig.width=15, fig.height=9}
+## deltas plot with stats
+(allGenera_deltasAbun_plot <- make_deltas_plot(input_table = all_genera_deltas_table,
+                                               x_axis = 'treatment_group',
+                                               y_axis = 'D1_TOC_diff', 
+                                               facet_by = 'Genus',
+                                               free_y = TRUE,
+                                               stat_table = allGenera_deltas_contrast,
+                                               x_labs = special_treatGroup_x_labs,
+                                               x_name = 'Treatment Group',
+                                               y_name = 'Relative Abundance Difference (TOC-D1)',
+                                               title_content = 'Relative Abundance: Baseline vs TOC'))
+```
+
+
+## **TOC vs D40 rel abun deltas plot for all selected genera**
+
+**Calculating D40-TOC deltas**
+```{r}
+## putting together deltas table
+allGenera_deltas_TOC_D40 <- proc_abun_table %>% 
+  select(subject_id, new_visit_label, Genus, rel_abund, treatment_group) %>% 
+  filter(new_visit_label == 'D40' | new_visit_label == 'D10-15/TOC') %>% 
+  spread(new_visit_label, rel_abund) %>% 
+  na.omit() %>% 
+  group_by(subject_id) %>% 
+  mutate(D40_TOC_diff = (D40 - `D10-15/TOC`)) %>% 
+  convert_as_factor(treatment_group)
+```
+
+**LMER stats for deltas (stratified by genus)**
+```{r}
+allGenera_deltas_TOC_D40_lmer <- art_lmer_strat(input_table = allGenera_deltas_TOC_D40,
+                                           strat_variable = 'Genus',
+                                           model_formula_left = 'D40_TOC_diff',
+                                           model_formula_right = 'treatment_group',
+                                           model_contrast_run_by = 'treatment_group')
+
+## adding y position to stat table so I can put it on the plot 
+allGenera_deltas_TOC_D40_contrast <- allGenera_deltas_TOC_D40_lmer$ARTContrast %>% 
+  rename(p.adj.signif = signif,
+         p = p.value) %>%
+  mutate(y.position = case_when(
+    Genus == 'Bacteroides' ~ 0.4,
+    Genus == 'Bifidobacterium' ~ 0.1,
+    Genus == 'Clostridioides' ~ 0.04,
+    Genus == 'Enterococcus' ~ 0.1,
+    Genus == 'Escherichia-Shigella' ~ 0.3,
+    Genus == 'Lactobacillus' ~ 0.1
+  ))
+```
+
+**Plot with stats**
+```{r, fig.width=15, fig.height=9}
+## deltas plot with stats
+(allGenera_deltasAbun_TOC_D40_plot <- make_deltas_plot(input_table = allGenera_deltas_TOC_D40,
+                                                       x_axis = 'treatment_group',
+                                                       y_axis = 'D40_TOC_diff', 
+                                                       facet_by = 'Genus',
+                                                       free_y = TRUE,
+                                                       stat_table = allGenera_deltas_TOC_D40_contrast,
+                                                       x_labs = special_treatGroup_x_labs,
+                                                       x_name = 'Treatment Group',
+                                                       y_name = 'Relative Abundance Difference (D40-TOC)',
+                                                       title_content = 'Relative Abundance: TOC vs D40'))
+```
+
+
+## **Bifidobacterium deltas: baseline vs TOC**
+
+**Calculating TOC-baseline deltas**
+```{r}
+bifido_only_table <- proc_abun_table %>% 
+  filter(Genus == 'Bifidobacterium') %>% 
+  select(subject_id, new_visit_label, Genus, rel_abund, treatment_group) %>% 
+  filter(new_visit_label == 'D1' | new_visit_label == 'D10-15/TOC') %>% 
+  spread(new_visit_label, rel_abund) %>% 
+  na.omit() %>% 
+  group_by(subject_id) %>% 
+  mutate(D1_TOC_diff = (`D10-15/TOC` - D1)) %>% 
+  convert_as_factor(treatment_group)
+```
+
+**LMER stats for deltas (don't need to be stratified by anything since just for one genus)**
+```{r}
+bifido_deltas_lmer <- art_lmer_notStrat(input_table = bifido_only_table,
+                                        formula_left = 'D1_TOC_diff',
+                                        formula_right = 'treatment_group',
+                                        contrast_run_by = 'treatment_group')
+
+## adding y position to stat table so I can put it on the plot 
+proc_bifido_deltas_lmer <- bifido_deltas_lmer$ARTContrast %>% 
+  rename(p.adj.signif = signif,
+         p = p.value) %>% 
+  mutate(y.position = as.numeric(paste(0.40)))
+```
+
+**Plot with stats**
+```{r, fig.width=10, fig.height=8}
+## deltas plot with stats
+(bifido_deltasAbun_plot <- make_deltas_plot(input_table = bifido_only_table,
+                                            x_axis = 'treatment_group',
+                                            y_axis = 'D1_TOC_diff',
+                                            facet_by = NULL,
+                                            free_y = FALSE,
+                                            stat_table = proc_bifido_deltas_lmer,
+                                            x_labs = treat_group_labs,
+                                            x_name = 'Treatment Group',
+                                            y_name = 'Relative Abundance Difference (TOC-D1)',
+                                            title_content = 'Bifidobacterium Relative Abundance: Baseline vs TOC'))
+```
+
+
+## **Saving my outputs**
+```{r}
+## plots
+ggsave('../plots/relAbun_genus_deltas_TOC-D1.pdf',
+       plot = allGenera_deltasAbun_plot,
+       width = 15, 
+       height = 9)
+ggsave('../plots/relAbun_genus_deltas_D40-TOC.pdf',
+       plot = allGenera_deltasAbun_TOC_D40_plot,
+       width = 15, 
+       height = 9)
+ggsave('../plots/bifido_abun_deltas.pdf',
+       plot = bifido_deltasAbun_plot,
+       width = 10,
+       height = 8)
+
+## stats
+write_tsv(proc_bifido_deltas_lmer,
+          '../stats/bifido_abunDeltas_TOC-D1.tsv')
+```
+

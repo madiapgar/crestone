@@ -1,0 +1,345 @@
+---
+title: "beta_div"
+output: html_document
+date: "2025-02-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(magrittr)
+library(broom)
+library(qiime2R)
+library(apppleplots)
+library(vegan)
+```
+
+**Functions**
+```{r}
+###### plot functions ######
+## 1 
+## unweighted/weighted unifrac pcoa result, faith's pd, and shannon entropy file prep 
+## going to attempt to return multiple outputs so I can just have one function for file prep
+biom_table_prep <- function(unweighted_fp,
+                            weighted_fp,
+                            faith_fp,
+                            metadata_file){
+  ## unweighted pcoa
+  unweighted <- read_qza(unweighted_fp)$data
+  unweighted_var <- unweighted$ProportionExplained
+  unweighted_pcoa <- unweighted$Vectors ##used for pcoa plot
+  names(unweighted_pcoa)[names(unweighted_pcoa) == 'SampleID'] <- 'sampleid'
+  
+  ## weighted pcoa
+  weighted <- read_qza(weighted_fp)$data
+  weighted_var <- weighted$ProportionExplained
+  weighted_pcoa <- weighted$Vectors
+  names(weighted_pcoa)[names(weighted_pcoa) == 'SampleID'] <- 'sampleid'
+  
+  ## faith's 
+  faith <- read_tsv(faith_fp)
+  names(faith)[names(faith) == '#SampleID'] <- 'sampleid'
+  
+  ## unweighted biom 
+  unweighted_pcoa %>% 
+    left_join(metadata_file, by = 'sampleid') %>% 
+    left_join(faith, by = 'sampleid') -> unweighted_biom
+  
+  ## weighted biom
+  weighted_pcoa %>% 
+    left_join(metadata_file, by = 'sampleid') %>% 
+    left_join(faith, by = 'sampleid') -> weighted_biom
+  
+  ## creating a list to return multiple outputs 
+  my_list <- list(UnweightedVar = unweighted_var, 
+                  WeightedVar = weighted_var,
+                  UnweightedBiom = unweighted_biom,
+                  WeightedBiom = weighted_biom)
+  return(my_list)
+}
+
+## 2
+## this function will pull out the percent variations from a specified column so you can add it to your pcoa plots 
+pcoa_ax_lab <- function(unifrac_var, col_name){
+  uni_lab <- as.character(round(unifrac_var[col_name] * 100, 2))
+  uni_lab <- paste0(col_name, ' - ', uni_lab, '%')
+  return(uni_lab)
+}
+
+###### stats functions ######
+## 1
+## for distance matrix processing
+## for beta diversity statistical analysis 
+dist_matrix_prep <- function(metadata_file,
+                             dist_matrix_fp){
+  ## metadata
+  metadata <- metadata_file
+  ## distance matrix
+  dist <- read_tsv(dist_matrix_fp)
+  names(dist)[names(dist) == '...1'] <- 'sampleid'
+  dist %>% 
+    gather(-sampleid, key = sample_col, value = dist) %>% 
+    filter(sampleid %in% metadata$sampleid) %>% 
+    filter(sample_col %in% metadata$sampleid) %>% 
+    spread(sample_col, dist) -> dist_long
+  dist_long %>% 
+    select(-sampleid) -> dist_proc
+  metadata %>% 
+    arrange(sampleid) -> metadata
+  metadata %>% 
+    filter(sampleid %in% dist_long$sampleid) -> filt_meta
+  dist_proc <- as.matrix(dist_proc)
+  row.names(dist_proc) <- colnames(dist_proc)
+  filt_meta <- filt_meta[order(filt_meta$sampleid),]
+  ## list of outputs
+  my_list <- list(Metadata = filt_meta,
+                  DistanceMatrix = dist_proc)
+  return(my_list)
+}
+
+
+## 2
+## beta diversity adonis2 testing function
+adonis_test <- function(dist_matrix,
+                        metadata_file,
+                        formula_left,
+                        formula_right){
+  dist_matrix <- as.dist(dist_matrix)
+  funky_formula <- paste(formula_left, formula_right, sep = "~")
+  adonis_results <- adonis2(as.formula(funky_formula),
+                            data = metadata_file,
+                            permutations = 999, 
+                            parallel = 4)
+  adonis_results <- tidy(adonis_results)
+  adonis_results['signif'] <- symnum(adonis_results$p.value,
+                                     cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+                                     symbols = c("****", "***", "**", "*", "+", "ns"),
+                                     abbr.colnames = FALSE,
+                                     na = "")
+  return(adonis_results)
+}
+
+## 3
+## to run an adonis test by day relative to infection
+adonis_per_day <- function(metadata_file,
+                           wanted_col,
+                           col_filter,
+                           dist_fp,
+                           formula_left,
+                           formula_right){
+  metadata_file %>% 
+    filter(.data[[wanted_col]] == col_filter) -> col_filt_metadata
+  dist_files <- dist_matrix_prep(col_filt_metadata,
+                                 dist_fp)
+  dist <- dist_files$DistanceMatrix
+  filt_meta <- dist_files$Metadata
+  adonis_results <- adonis_test(dist,
+                                filt_meta,
+                                formula_left,
+                                formula_right)
+  adonis_results[wanted_col] <- col_filter
+  return(adonis_results)
+}
+
+## 4 
+## function that will run a for loop to stratify the adonis test by a certain variable
+adonis_for_loop <- function(metadata_file,
+                            dist_matrix_fp,
+                            strat_column,
+                            formula_left,
+                            formula_right){
+  output <- list()
+  for (i in unique(unlist(metadata_file[strat_column]))) {
+    tmp_output <- adonis_per_day(metadata_file,
+                                 strat_column,
+                                 i,
+                                 dist_matrix_fp,
+                                 formula_left,
+                                 formula_right)
+    tmp_output[strat_column] <- i
+    # when saving something as a named list in R, 
+    # we need to use the double brackets
+    # output[[as.character(i)]] <- tmp_output
+    
+    # if we're appending a higher dimensional object (df, matrix, vector,) 
+    # to a list, we need to wrap it in a list() within the append function.
+    output <- append(output, list(tmp_output))
+  }
+  output <- bind_rows(output)
+  return(output)
+}
+
+```
+
+**File paths**
+```{r}
+uu_fp <- '../../oren_crestone/data/qiime/core_outputs/unweighted_unifrac_pcoa_results.qza'
+wu_fp <- '../../oren_crestone/data/qiime/core_outputs/weighted_unifrac_pcoa_results.qza'
+uu_dist_fp <- '../../oren_crestone/data/qiime/core_outputs/uw_dist_matrix.tsv'
+wu_dist_fp <- '../../oren_crestone/data/qiime/core_outputs/w_dist_matrix.tsv'
+faith_pd_fp <- '../../oren_crestone/data/qiime/core_outputs/faith_pd.tsv'
+seq_meta_fp <- '../../oren_crestone/data/metadata_combined.txt'
+clinical_meta_fp <- '../data/subject_info.tsv'
+
+## global plot labels 
+treat_group_labs <- c('CRS3123 200mg',
+                      'CRS3123 400mg',
+                      'Vancomycin 125mg')
+names(treat_group_labs) <- c('CRS3123_200mg_po_bid',
+                             'CRS3123_400mg_po_bid',
+                             'Vancomycin_125mg_po_qid')
+
+visit_labs <- c('Screen',
+                  'D1',
+                  'D4',
+                  'TOC/FUV1',
+                  'FUV2',
+                  'FUV3',
+                  'FUV4')
+```
+
+**Reading in metadata files**
+```{r}
+seq_meta <- read_tsv(seq_meta_fp) %>% 
+  select(SampleID, Subject_ID, Vist, `Visit Description`) %>% 
+  rename(sampleid = SampleID,
+         subject_id = Subject_ID,
+         visit_num = Vist,
+         visit_des = `Visit Description`)
+
+clinical_meta <- read_tsv(clinical_meta_fp)
+
+full_meta <- seq_meta %>% 
+  left_join(clinical_meta, by = "subject_id") %>%  
+  na.omit()
+```
+
+**Data wrangled**
+```{r}
+## for plots 
+pcoa_files <- biom_table_prep(unweighted_fp = uu_fp,
+                              weighted_fp = wu_fp,
+                              faith_fp = faith_pd_fp,
+                              metadata_file = full_meta)
+
+unweighted_df <- pcoa_files$UnweightedBiom %>% 
+  filter(visit_num != 'U') %>% 
+  na.omit()
+uw_var <- pcoa_files$UnweightedVar
+
+weighted_df <- pcoa_files$WeightedBiom %>% 
+  filter(visit_num != 'U') %>%
+  na.omit()
+wu_var <- pcoa_files$WeightedVar
+```
+
+**Unweighted UniFrac PCoA plot**
+```{r, fig.width=14, fig.height=5}
+uw_uni_xlab <- pcoa_ax_lab(uw_var, 'PC1')
+uw_uni_ylab <- pcoa_ax_lab(uw_var, 'PC2')
+
+(unweighted_pcoa_plot <- apppleplots::pcoa_plots(input_table = unweighted_df,
+                                                x_value = 'PC1',
+                                                y_value = 'PC2',
+                                                facet_once = TRUE,
+                                                facet_twice = FALSE,
+                                                point_fill = 'visit_num',
+                                                point_alpha = 0.7,
+                                                point_size = 3,
+                                                fill_type = 'discrete',
+                                                palette = 'Spectral',
+                                                facet_rows = NULL,
+                                                facet_cols = 'treatment_group',
+                                                row_labs = NULL,
+                                                col_labs = treat_group_labs,
+                                                legend_name = "Visit",
+                                                x_name = uw_uni_xlab,
+                                                y_name = uw_uni_ylab,
+                                                title_content = 'Unweighted UniFrac PCoA') +
+    scale_fill_brewer(palette = 'Spectral',
+                      labels = visit_labs) +
+    geom_line(aes(group = subject_id), alpha = 0.2) +
+    theme_bw(base_size = 20))
+```
+
+**Unweighted UniFrac Adonis Test**
+```{r}
+## testing distances between visits
+(uu_adonis_byTreatment <- adonis_for_loop(metadata_file = full_meta,
+                                         dist_matrix_fp = uu_dist_fp,
+                                         strat_column = 'treatment_group',
+                                         formula_left = 'dist_matrix',
+                                         formula_right = 'visit_num'))
+
+## testing differences between treatment groups 
+(uu_adonis_byVisit <- adonis_for_loop(metadata_file = full_meta,
+                                     dist_matrix_fp = uu_dist_fp,
+                                     strat_column = 'visit_num',
+                                     formula_left = 'dist_matrix',
+                                     formula_right = 'treatment_group'))
+```
+
+
+**Weighted UniFrac PCoA Plot**
+```{r, fig.width=14, fig.height=5}
+wu_uni_xlab <- pcoa_ax_lab(wu_var, 'PC1')
+wu_uni_ylab <- pcoa_ax_lab(wu_var, 'PC2')
+
+(weighted_pcoa_plot <- apppleplots::pcoa_plots(input_table = weighted_df,
+                                                x_value = 'PC1',
+                                                y_value = 'PC2',
+                                                facet_once = TRUE,
+                                                facet_twice = FALSE,
+                                                point_fill = 'visit_num',
+                                                point_alpha = 0.7,
+                                                point_size = 3,
+                                                fill_type = 'discrete',
+                                                palette = 'Spectral',
+                                                facet_rows = NULL,
+                                                facet_cols = 'treatment_group',
+                                                row_labs = NULL,
+                                                col_labs = treat_group_labs,
+                                                legend_name = "Visit",
+                                                x_name = wu_uni_xlab,
+                                                y_name = wu_uni_ylab,
+                                                title_content = 'Weighted UniFrac PCoA') +
+    scale_fill_brewer(palette = 'Spectral',
+                      labels = visit_labs) +
+    geom_line(aes(group = subject_id), alpha = 0.2) +
+    theme_bw(base_size = 20))
+```
+
+**Weighted UniFrac Adonis Test**
+```{r}
+## testing distances between visits
+(wu_adonis_byTreatment <- adonis_for_loop(metadata_file = full_meta,
+                                         dist_matrix_fp = wu_dist_fp,
+                                         strat_column = 'treatment_group',
+                                         formula_left = 'dist_matrix',
+                                         formula_right = 'visit_num'))
+
+## testing distances between treatment groups 
+(wu_adonis_byVisit <- adonis_for_loop(metadata_file = full_meta,
+                                     dist_matrix_fp = wu_dist_fp,
+                                     strat_column = 'visit_num',
+                                     formula_left = 'dist_matrix',
+                                     formula_right = 'treatment_group'))
+```
+
+
+
+**Saving my Outputs**
+```{r}
+ggsave('../plots/unweighted_unifrac_pcoa.pdf',
+       plot = unweighted_pcoa_plot,
+       width = 14,
+       height = 5)
+ggsave('../plots/weighted_unifrac_pcoa.pdf',
+       plot = weighted_pcoa_plot,
+       width = 14,
+       height = 5)
+```
+

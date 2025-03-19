@@ -1,0 +1,271 @@
+---
+title: "taxonomy_stats"
+output: html_document
+date: "2025-02-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(magrittr)
+library(broom)
+library(qiime2R)
+library(apppleplots)
+library(ggpubr)
+library(rstatix)
+```
+
+## **Functions**
+`source()` pulls in functions placed in other R scripts and saves them to your global environment!
+- here i'm pulling in the statistical analysis functions:
+  - `test_normality()` - does basic R tests for normality on the data
+  - `art_lmer_notStrat()` - runs aligned rank transform lmer on the data in an overall model (not stratified)
+  - `art_lmer_strat()` - runs aligned rank transform lmer on the data in a variable stratified model
+  - `art_lmer_doubleStrat()` - runs aligned rank transform lmer on the data in a model stratified by two variables
+```{r}
+source("art_lmer_functions.R")
+source("normality_function.R")
+
+abun_file_prep <- function(metadata_fp,
+                           tax_fp,
+                           otu_table_fp,
+                           group_by_cols,
+                           filter_tax_by = NULL,
+                           filter_tax_col = NULL){
+  ## metadata
+  metadata_file <- read_tsv(metadata_fp)
+  ## taxonomy
+  taxonomy <- read_qza(tax_fp)$data %>% 
+    parse_taxonomy() %>% 
+    rownames_to_column('asv')
+  ## otu table 
+  otu_table <- read_qza(otu_table_fp)$data
+  
+  otu_table <- otu_table %>% 
+    as_tibble(rownames = 'asv') %>% 
+    gather(-asv, key = sampleid, value = abun) %>% 
+    group_by(sampleid) %>% 
+    mutate(rel_abun = abun/sum(abun)) %>% 
+    mutate(rel_abun = rel_abun + 0.000001) %>% 
+    filter(sampleid %in% metadata_file$sampleid)
+  ## joining all tables together 
+  abun_table <- otu_table %>% 
+    left_join(metadata_file, by = 'sampleid') %>% 
+    left_join(taxonomy, by = 'asv') %>% 
+    group_by(across(all_of(group_by_cols))) %>%
+    summarise(rel_abund = sum(rel_abun)) %>% 
+    ungroup()
+  
+  if (is.character(filter_tax_by) & is.character(filter_tax_col)){
+    abun_table <- abun_table %>% 
+      filter(.data[[filter_tax_col]] %in% filter_tax_by)
+  } else {
+    abun_table
+  }
+  
+  ## creating a list for my outputs
+  my_list <- list(Taxonomy = taxonomy,
+                  OTUTable = otu_table,
+                  AbundanceTable = abun_table)
+  return(my_list)
+}
+
+## small function to assign a value to a key in a dataframe column (i.e. numbers to actual categorical variables)
+values_to_keys <- function(input_table,
+                           key_col_name,
+                           value_col_name,
+                           key_value_list,
+                           col_order_list){
+  
+  input_table[value_col_name] <- unlist(lapply(unlist(input_table[key_col_name]), 
+                                        FUN = function(x){key_value_list[[x]]}))
+  
+  output_table <- input_table %>%
+    select(all_of(col_order_list), everything())
+  
+  return(output_table)
+}
+```
+
+## **Reading in files and data wrangling**
+
+**File paths**
+```{r}
+tax_FP <- '../../oren_crestone/data/qiime/taxonomy.qza'
+otu_table_FP <- '../../oren_crestone/data/qiime/taxOnly_otu_table.qza'
+proc_seq_meta_fp <- '../data/proc_seq_metadata.tsv'
+subject_info_fp <- '../data/subject_info.tsv'
+
+## global lists for renaming plot labels
+visit_x_labs <- c('Screen',
+                  'D1',
+                  'D4',
+                  'TOC',
+                  'D17', 
+                  'D40', 
+                  'D70') 
+
+treat_group_labs <- c('CRS3123 200mg',
+                      'CRS3123 400mg',
+                      'Vancomycin 125mg')
+names(treat_group_labs) <- c('CRS3123_200mg_po_bid',
+                             'CRS3123_400mg_po_bid',
+                             'Vancomycin_125mg_po_qid')
+
+special_treatGroup_x_labs <- c('CRS3123\n200mg',
+                               'CRS3123\n400mg',
+                               'Vancomycin\n125mg')
+```
+
+**Prepping abundance table**
+```{r}
+subject_info_df <- read_tsv(subject_info_fp)
+
+abun_col_list <- c('sampleid',
+                   'subject_id',
+                   'visit_day',
+                   'new_visit_num',
+                   'new_visit_label',
+                   'Phylum',
+                   'Family',
+                   'Genus')
+
+wanted_family <- c('Enterobacteriaceae')
+
+wanted_genus <- c('Bifidobacterium',
+                  'Enterococcus',
+                  'Clostridioides',
+                  'Lactobacillus',
+                  'Bacteroides',
+                  'Escherichia-Shigella')
+
+abun_files <- abun_file_prep(metadata_fp = proc_seq_meta_fp,
+                             tax_fp = tax_FP,
+                             otu_table_fp = otu_table_FP,
+                             group_by_cols = abun_col_list,
+                             filter_tax_by = wanted_genus,
+                             filter_tax_col = 'Genus')
+
+proc_abun_table <- abun_files$AbundanceTable
+
+proc_abun_table <- proc_abun_table %>% 
+  left_join(subject_info_df, by = 'subject_id') %>% 
+  na.omit() %>% 
+  mutate(new_visit_num = as.numeric(new_visit_num))
+```
+## **Relative abundance over time plot**
+```{r, fig.width=17, fig.height=13}
+(genusAbun_plot <- apppleplots::facet_twice_plots(input_table = proc_abun_table,
+                               x_value = 'new_visit_num',
+                               y_value = 'rel_abund',
+                               x_value_type = 'discrete',
+                               y_transform = TRUE,
+                               x_labels = visit_x_labs,
+                               box_group_by = 'new_visit_num',
+                               line_group_by = 'subject_id',
+                               point_alpha = 0,
+                               facet_rows = 'Genus',
+                               facet_cols = 'treatment_group',
+                               row_labs = NULL,
+                               col_labs = treat_group_labs,
+                               x_name = 'Study Day',
+                               y_name = 'Relative Abundance (log10)',
+                               title_content = 'Select Genera Relative Abundance') +
+  scale_x_continuous(breaks = c(1, 2, 3, 4, 5, 6, 7),
+                     labels = visit_x_labs) +
+  geom_jitter(width = 0.1, height = 0, alpha = 0.4, size = 2.5) +
+  theme_bw(base_size = 20) +
+  theme(strip.text.y.right = element_text(angle = 0)))
+```
+
+## **ART LMER Stats**
+
+**Not stratified analysis**
+```{r}
+factored_abun_table <- proc_abun_table %>% 
+  select(sampleid, subject_id, new_visit_num, Genus, rel_abund, treatment_group) %>% 
+  convert_as_factor(subject_id, new_visit_num, Genus, treatment_group)
+
+genusAbun_art_lmer <- art_lmer_notStrat(input_table = factored_abun_table,
+                                        formula_left = 'rel_abund',
+                                        formula_right = 'new_visit_num * Genus * treatment_group + (1|subject_id)',
+                                        contrast_run_by = 'new_visit_num:Genus:treatment_group')
+
+(genusAbun_notStrat_res <- genusAbun_art_lmer$ARTResults)
+(genusAbun_notStrat_contrast <- genusAbun_art_lmer$ARTContrast)
+```
+
+**Stratified by treatment group**
+```{r}
+genusAbun_art_lmer_strat <- art_lmer_strat(input_table = factored_abun_table,
+                                           strat_variable = 'treatment_group',
+                                           model_formula_left = 'rel_abund',
+                                           model_formula_right = 'new_visit_num * Genus + (1|subject_id)',
+                                           model_contrast_run_by = 'new_visit_num:Genus')
+
+(genusAbun_strat_res <- genusAbun_art_lmer_strat$ARTResults)
+(genusAbun_strat_contrast <- genusAbun_art_lmer_strat$ARTContrast)
+```
+
+**Double stratified by genus and visit**
+dont need to add subject_id as a random effect to this model since I'm running the stats between relative abundance of the genera individually for each day and treatment group (so you only have one sample per subject bc its not across the whole timeline)
+```{r}
+genusAbun_art_lmer_doubleStrat <- art_lmer_doubleStrat(input_table = factored_abun_table,
+                                                       strat_variable1 = 'Genus',
+                                                       strat_variable2 = 'new_visit_num',
+                                                       model_formula_left = 'rel_abund',
+                                                       model_formula_right = 'treatment_group',
+                                                       model_contrast_run_by = 'treatment_group')
+
+(genusAbun_doubleStrat_res <- genusAbun_art_lmer_doubleStrat$ARTResults)
+(genusAbun_doubleStrat_contrast <- genusAbun_art_lmer_doubleStrat$ARTContrast)
+```
+
+creating a column in the stat results that translates visit number to study day for ease of understanding
+```{r}
+visit_key_value <- c('1' = 'Screen',
+                     '2' = 'D1',
+                     '3' = 'D4',
+                     '4' = 'D10-15/TOC',
+                     '5' = 'D17',
+                     '6' = 'D40',
+                     '7' = 'D70')
+visit_col_order <- c('Genus', 
+                     'new_visit_num', 
+                     'visit_label')
+
+genusAbun_doubleStrat_res_wValues <- values_to_keys(input_table = genusAbun_doubleStrat_res,
+                                                    key_col_name = 'new_visit_num',
+                                                    value_col_name = 'visit_label',
+                                                    key_value_list = visit_key_value,
+                                                    col_order_list = visit_col_order)
+
+genusAbun_doubleStrat_contrast_wValues <- values_to_keys(input_table = genusAbun_doubleStrat_contrast,
+                                                         key_col_name = 'new_visit_num',
+                                                         value_col_name = 'visit_label',
+                                                         key_value_list = visit_key_value,
+                                                         col_order_list = visit_col_order)
+```
+
+
+## **Saving my outputs**
+```{r}
+ggsave('../plots/genus_relAbun_plot.pdf',
+       plot = genusAbun_plot,
+       width = 17,
+       height = 13)
+
+## stats
+write_tsv(genusAbun_strat_res,
+          '../stats/genusAbun_treatGroup_stratOnly.tsv')
+write_tsv(genusAbun_strat_contrast,
+          '../stats/genusAbun_treatGroup_stratOnly_postHoc.tsv')
+write_tsv(genusAbun_doubleStrat_res_wValues,
+          '../stats/genusAbun_treatGroup_visit_strat.tsv')
+write_tsv(genusAbun_doubleStrat_contrast_wValues,
+          '../stats/genusAbun_treatGroup_visitStrat_postHoc.tsv')
+```
+

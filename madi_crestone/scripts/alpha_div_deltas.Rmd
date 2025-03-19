@@ -1,0 +1,181 @@
+---
+title: "alpha_div_deltas"
+output: html_document
+date: "2025-02-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(magrittr)
+library(broom)
+library(qiime2R)
+library(apppleplots)
+library(ggpubr)
+```
+
+**Functions**
+`source()` pulls in functions placed in other R scripts and saves them to your global environment!
+- here i'm pulling in the statistical analysis functions:
+  - `art_lmer_notStrat()` - runs aligned rank transform lmer on the data in an overall model (not stratified)
+  - `art_lmer_strat()` - runs aligned rank transform lmer on the data in a variable stratified model
+  - `art_lmer_doubleStrat()` - runs aligned rank transform lmer on the data in a model stratified by two variables
+```{r}
+source("art_lmer_functions.R")
+```
+
+**File paths**
+```{r}
+faith_pd_fp <- '../../oren_crestone/data/qiime/core_outputs/faith_pd.tsv'
+shannon_fp <- '../../oren_crestone/data/qiime/core_outputs/shannon_entropy.tsv'
+proc_seq_meta_fp <- '../data/proc_seq_metadata.tsv'
+subject_info_fp <- '../data/subject_info.tsv'
+
+treat_group_labs <- c('CRS3123 200mg',
+                      'CRS3123 400mg',
+                      'Vancomycin 125mg')
+```
+
+**Reading in files**
+```{r}
+faith_pd <- read_tsv(faith_pd_fp) %>% 
+  rename(sampleid = `#SampleID`)
+
+shannon <- read_tsv(shannon_fp) %>% 
+  rename(sampleid = `...1`)
+
+proc_seq_meta <- read_tsv(proc_seq_meta_fp)
+
+subject_info_meta <- read_tsv(subject_info_fp)
+```
+
+**Data wrangled**
+```{r}
+## combining faith, shannon, and clinical meta w seq metadata
+alphaDiv_seq_meta <- proc_seq_meta %>% 
+  left_join(faith_pd, by = 'sampleid') %>% 
+  left_join(shannon, by = 'sampleid') %>% 
+  left_join(subject_info_meta, by = 'subject_id') %>% 
+  na.omit()
+
+## calculating faith's pd deltas between visits 2 and 4 (more samples from visit 2)
+d1_toc_deltas <- alphaDiv_seq_meta %>% 
+  select(subject_id, treatment_group, new_visit_label, faith_pd) %>% 
+  filter(new_visit_label == 'D1' | new_visit_label == 'D10-15/TOC') %>% 
+  spread(new_visit_label, faith_pd) %>% 
+  na.omit() %>% 
+  group_by(subject_id) %>% 
+  mutate('D1_TOC_diff' = (`D10-15/TOC` - D1)) %>% 
+  convert_as_factor(subject_id, treatment_group)
+
+## calculating faith's pd deltas between visits 1 and 4 
+screen_toc_deltas <- alphaDiv_seq_meta %>% 
+  select(subject_id, treatment_group, new_visit_label, faith_pd) %>% 
+  filter(new_visit_label == 'Screen' | new_visit_label == 'D10-15/TOC') %>% 
+  spread(new_visit_label, faith_pd) %>% 
+  na.omit() %>% 
+  group_by(subject_id) %>% 
+  mutate('Screen_TOC_diff' = (`D10-15/TOC` - Screen)) %>% 
+  convert_as_factor(subject_id, treatment_group)
+
+## calculating faith's pd deltas between visits 4 and 7
+toc_d70_deltas <- alphaDiv_seq_meta %>% 
+  select(subject_id, treatment_group, new_visit_label, faith_pd) %>% 
+  filter(new_visit_label == 'D10-15/TOC' | new_visit_label == 'D70') %>% 
+  spread(new_visit_label, faith_pd) %>% 
+  na.omit() %>% 
+  group_by(subject_id) %>% 
+  mutate('D70_TOC_diff' = (D70 - `D10-15/TOC`)) %>% 
+  convert_as_factor(subject_id, treatment_group)
+
+## calculating faith's pd deltas between visits 4 and 6 (more samples from visit 6)
+toc_d40_deltas <- alphaDiv_seq_meta %>% 
+  select(subject_id, treatment_group, new_visit_label, faith_pd) %>% 
+  filter(new_visit_label == 'D10-15/TOC' | new_visit_label == 'D40') %>% 
+  spread(new_visit_label, faith_pd) %>% 
+  na.omit() %>% 
+  group_by(subject_id) %>% 
+  mutate('D40_TOC_diff' = (D40 - `D10-15/TOC`)) %>% 
+  convert_as_factor(subject_id, treatment_group)
+
+```
+
+**Stats** 
+creating a named list of delta dataframes and a list of what their names are
+```{r}
+delta_df_list <- list(Screen_TOC_diff = screen_toc_deltas,
+                      D1_TOC_diff = d1_toc_deltas,
+                      D40_TOC_diff = toc_d40_deltas,
+                      D70_TOC_diff = toc_d70_deltas)
+
+delta_df_names <- c('Screen_TOC_diff',
+                    'D1_TOC_diff',
+                    'D40_TOC_diff',
+                    'D70_TOC_diff')
+```
+
+using a for loop to extract each deltas dataframe out of the named list, run stats on it, add a column of which dataframe its from for the results and combining all the resulting stats dfs together (could i have made this easier on myself? sure but i didn't want to)
+```{r}
+out_res <- tibble()
+out_contrast <- tibble()
+
+for (df_name in unique(unlist(delta_df_names))){
+  wanted_df <- delta_df_list[[df_name]]
+  
+  deltas_lmer <- art_lmer_notStrat(input_table = wanted_df,
+                                   formula_left = df_name,
+                                   formula_right = 'treatment_group',
+                                   contrast_run_by = 'treatment_group')
+
+  deltas_lmer_res <- deltas_lmer$ARTResults %>% 
+    mutate(deltas_calc_between = paste(df_name)) %>% 
+    select(deltas_calc_between, everything())
+  
+  deltas_lmer_contrast <- deltas_lmer$ARTContrast %>% 
+    mutate(deltas_calc_between = paste(df_name)) %>% 
+    select(deltas_calc_between, everything())
+  
+  out_res <- bind_rows(out_res, deltas_lmer_res)
+  out_contrast <- bind_rows(out_contrast, deltas_lmer_contrast)
+}
+```
+
+**D1-TOC Faith's PD Plot**
+```{r, fig.width=10, fig.height=8}
+d1_toc_contrast <- out_contrast %>% 
+  filter(deltas_calc_between == 'D1_TOC_diff')
+
+(d1_toc_deltas_plot <- d1_toc_deltas %>% 
+  ggplot(aes(x = treatment_group, y = D1_TOC_diff)) +
+  geom_boxplot(aes(group = treatment_group), outlier.shape = NA) +
+  geom_hline(yintercept = 0, linetype = 'dashed', color = 'purple', size = 0.4) +
+  geom_jitter(width = 0.1, height = 0, alpha = 0.4, size = 2.5) +
+  theme_bw(base_size = 20) +
+  stat_pvalue_manual(d1_toc_contrast,
+                     y.position = 25,
+                     step.increase = 0.1,
+                     label = 'signif') +
+  scale_x_discrete(labels = treat_group_labs) +
+  labs(x = 'Treatment Group',
+       y = "Faith's PD Difference (TOC-D1)",
+       title = "Faith's PD: TOC vs D1"))
+```
+
+
+**Saving my outputs**
+```{r}
+ggsave('../plots/deltas_faithPD_TOC-D1.pdf',
+       plot = d1_toc_deltas_plot,
+       width = 10,
+       height = 8)
+
+
+write_tsv(out_res,
+          '../stats/deltas_faithPD_by_treatGroup.tsv')
+write_tsv(out_contrast,
+          '../stats/deltas_faithPD_by_treatGroup_postHoc.tsv')
+```
+

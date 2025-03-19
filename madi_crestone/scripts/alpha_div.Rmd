@@ -1,0 +1,227 @@
+---
+title: "alpha_div"
+output: html_document
+date: "2025-02-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(magrittr)
+library(broom)
+library(qiime2R)
+library(apppleplots)
+library(ggpubr)
+```
+
+**Functions**
+`source()` pulls in functions placed in other R scripts and saves them to your global environment!
+- here i'm pulling in the statistical analysis functions:
+  - `test_normality()` - does basic R tests for normality on the data
+  - `art_lmer_notStrat()` - runs aligned rank transform lmer on the data in an overall model (not stratified)
+  - `art_lmer_strat()` - runs aligned rank transform lmer on the data in a variable stratified model
+```{r}
+source("art_lmer_functions.R")
+source("normality_function.R")
+```
+
+**File paths**
+```{r}
+faith_pd_fp <- '../../oren_crestone/data/qiime/core_outputs/faith_pd.tsv'
+shannon_fp <- '../../oren_crestone/data/qiime/core_outputs/shannon_entropy.tsv'
+proc_seq_meta_fp <- '../data/proc_seq_metadata.tsv'
+subject_info_fp <- '../data/subject_info.tsv'
+
+## global plot labels 
+treat_group_labs <- c('CRS3123 200mg',
+                      'CRS3123 400mg',
+                      'Vancomycin 125mg')
+names(treat_group_labs) <- c('CRS3123_200mg_po_bid',
+                             'CRS3123_400mg_po_bid',
+                             'Vancomycin_125mg_po_qid')
+
+visit_x_order <- c('Screen',
+                  'D1',
+                  'D4',
+                  'D10-15/TOC',
+                  'D17', 
+                  'D40', 
+                  'D70')
+
+visit_x_labs <- c('Screen',
+                  'D1',
+                  'D4',
+                  'TOC',
+                  'D17', 
+                  'D40', 
+                  'D70') 
+```
+
+**Reading in files**
+```{r}
+faith_pd <- read_tsv(faith_pd_fp) %>% 
+  rename(sampleid = `#SampleID`)
+
+shannon <- read_tsv(shannon_fp) %>% 
+  rename(sampleid = `...1`)
+
+proc_seq_meta <- read_tsv(proc_seq_meta_fp)
+
+subject_info_meta <- read_tsv(subject_info_fp)
+```
+
+**Data wrangled**
+```{r}
+## combining faith, shannon, and clinical meta w seq metadata
+alphaDiv_seq_meta <- proc_seq_meta %>% 
+  left_join(faith_pd, by = 'sampleid') %>% 
+  left_join(shannon, by = 'sampleid') %>% 
+  left_join(subject_info_meta, by = 'subject_id') %>% 
+  na.omit()
+```
+
+## **Stats**
+
+**testing for normality**
+- running a two-way repeated measures anova, assuming normality
+- want to account for multiple samples taken from same subject at different time points
+- this isn't working bc there isn't consistent samples taken at all the different time points per subject so I can't do repeated measures 
+```{r}
+test_normality(input_table = alphaDiv_seq_meta,
+               formula_left = 'faith_pd',
+               formula_right = 'new_visit_num * treatment_group',
+               group_by_vars = c('treatment_group', 'new_visit_num'),
+               facet_by = 'treatment_group')
+```
+
+**ART LMER Stats**
+another alternative to a two-way non-parametric ANOVA: aligned rank transform (ART)
+how to include repeated measures term??:
+- can use Error(subject_id) in the formula but this means the model will be stratified by subject_id and implies that the data MUST be balanced, especially if you have more than two strata (which I do)
+- can use (1|subject_id) to run a linear mixed effects model while taking into account multiple samples from the same subject 
+- partial eta squared tells us how large of an effect the independent variable(s) (RHS) have on the dependent variable (LHS)
+
+contrasts analysis pointers:
+- can specify one of the variables to see multiple comparisons (i.e. 'visit_num' or 'treatment_group' individually)
+- can also get all comparisons for the combinations of the variables (i.e. 'visit_num:treatment_group')
+
+**Not stratified analysis**
+```{r}
+factored_alphaDiv <- alphaDiv_seq_meta %>% 
+  select(subject_id, new_visit_num, treatment_group, faith_pd) %>%  
+  convert_as_factor(subject_id, new_visit_num, treatment_group)
+
+## overall non-stratified model 
+faithPD_art_lmer <- art_lmer_notStrat(input_table = factored_alphaDiv,
+                                      formula_left = 'faith_pd',
+                                      formula_right = 'new_visit_num * treatment_group + (1|subject_id)',
+                                      contrast_run_by = 'new_visit_num:treatment_group')
+
+faithPD_art_lmer_notStrat_res <- faithPD_art_lmer$ARTResults
+faithPD_art_lmer_notStrat_contrast <- faithPD_art_lmer$ARTContrast
+```
+
+**Stratified analysis**
+running a separate model for each treatment group - the same as grouping by the treatment group and running stats, overall model results are above 
+```{r}
+faithPD_art_lmer_strat <- art_lmer_strat(input_table = factored_alphaDiv,
+                                         strat_variable = 'treatment_group',
+                                         model_formula_left = 'faith_pd',
+                                         model_formula_right = 'new_visit_num + (1|subject_id)',
+                                         model_contrast_run_by = 'new_visit_num')
+
+faithPD_art_lmerStrat_res <- faithPD_art_lmer_strat$ARTResults
+faithPD_art_lmerStrat_contrast <- faithPD_art_lmer_strat$ARTContrast %>% 
+  rename(p.adj.signif = signif) %>% 
+  mutate(y.position = case_when(
+    treatment_group == 'CRS3123_200mg_po_bid' ~ 40,
+    treatment_group == 'CRS3123_400mg_po_bid' ~ 50,
+    treatment_group == 'Vancomycin_125mg_po_qid' ~ 60
+  ))
+```
+
+```{r}
+## pulling the column name off the group 1/2 comparisons so I can put the p value signif on the plot
+faithPD_art_lmerStrat_contrast$group1 <- gsub("new_visit_num*", "", faithPD_art_lmerStrat_contrast$group1)
+faithPD_art_lmerStrat_contrast$group2 <- gsub("new_visit_num*", "", faithPD_art_lmerStrat_contrast$group2)
+```
+
+TO DO:
+- run same stats but with sustained clinical response or not between treatment groups!!
+- run same stats backwards (stratify by visit num and run between treatment groups)
+
+## **Plots**
+faith pd plot
+- create a plot without stats and one with stats
+```{r, fig.width=19, fig.height=7}
+## plot without stats
+## y axis scales fixed 
+(faith_plot <- alphaDiv_seq_meta %>% 
+  ggplot(aes(x = as.factor(new_visit_num), y = faith_pd)) +
+  geom_boxplot(aes(group = new_visit_num), outlier.shape = NA) +
+  geom_jitter(width = 0.1, height = 0, alpha = 0.4, size = 2.5) +
+  scale_x_discrete(labels = visit_x_labs) +
+  theme_bw(base_size = 20) +
+  facet_wrap(~treatment_group,
+             labeller = labeller(treatment_group = treat_group_labs)) +
+  labs(x = 'Visit',
+       y = "Faith's PD",
+       title = "Alpha Diversity: Faith's PD"))
+
+## plot with stats
+## y axis scales free so not all points are smushed near the bottom
+(faith_plot_wStats <- faith_plot +
+    facet_wrap(~treatment_group,
+             labeller = labeller(treatment_group = treat_group_labs),
+             scales = "free_y") +
+    stat_pvalue_manual(faithPD_art_lmerStrat_contrast,
+                       step.group.by = 'treatment_group',
+                       step.increase = 0.1,
+                       hide.ns = TRUE,
+                       label = 'p.adj.signif'))
+```
+
+shannon entropy plot
+```{r, fig.width=19, fig.height=7}
+(shannon_plot <- alphaDiv_seq_meta %>% 
+  ggplot(aes(x = as.factor(new_visit_num), y = shannon_entropy)) +
+  geom_boxplot(aes(group = new_visit_num), outlier.shape = NA) +
+  geom_jitter(width = 0.1, height = 0, alpha = 0.4, size = 2.5) +
+  scale_x_discrete(labels = visit_x_labs) +
+  theme_bw(base_size = 20) +
+  facet_grid(~treatment_group,
+             labeller = labeller(treatment_group = treat_group_labs)) +
+  labs(x = 'Visit',
+       y = "Shannon Entropy",
+       title = "Alpha Diversity: Shannon Entropy"))
+```
+
+## **Saving my outputs**
+```{r}
+ggsave('../plots/faith_pd_plot.pdf',
+       plot = faith_plot,
+       width = 19,
+       height = 7)
+ggsave('../plots/faith_pd_wStats_plot.pdf',
+       plot = faith_plot_wStats,
+       width = 19,
+       height = 7)
+ggsave('../plots/shannon_plot.pdf',
+       plot = shannon_plot,
+       width = 19,
+       height = 7)
+
+## stats
+write_tsv(faithPD_art_lmerStrat_res,
+          '../stats/faithPD_treatGroup_strat.tsv')
+write_tsv(faithPD_art_lmerStrat_contrast,
+          '../stats/faithPD_treatGroup_strat_postHoc.tsv')
+write_tsv(faithPD_art_lmer_notStrat_res,
+          '../stats/faithPD_overall.tsv')
+write_tsv(faithPD_art_lmer_notStrat_contrast,
+          '../stats/faithPD_overall_postHoc.tsv')
+```
+
